@@ -181,14 +181,16 @@ mod switch;
 #[allow(clippy::module_inception)]
 mod task;
 
-use crate::config::{MAX_APP_NUM, MAX_SYSCALL_NUM};
+use crate::config::{MAX_APP_NUM, MAX_SYSCALL_NUM, CLOCK_FREQ};
 use crate::loader::{get_num_app, init_app_cx};
 use crate::sync::UPSafeCell;
+use crate::timer::get_time;
 use lazy_static::*;
 pub use switch::__switch;
 pub use task::{TaskControlBlock, TaskStatus};
 
 pub use context::TaskContext;
+use crate::syscall::TaskInfo;
 
 /// The task manager, where all the tasks are managed.
 ///
@@ -221,6 +223,8 @@ lazy_static! {
         let mut tasks = [TaskControlBlock {
             task_cx: TaskContext::zero_init(),
             task_status: TaskStatus::UnInit,
+            task_begin_time: 0,
+            syscall_times: [0; MAX_SYSCALL_NUM],
         }; MAX_APP_NUM];
         for (i, t) in tasks.iter_mut().enumerate().take(num_app) {
             t.task_cx = TaskContext::goto_restore(init_app_cx(i));
@@ -304,6 +308,24 @@ impl TaskManager {
     }
 
     // LAB1: Try to implement your function to update or get task info!
+    fn update_syscall_times(&self, syscall_id: usize) {
+        let mut inner = self.inner.exclusive_access();
+        let index = inner.current_task;
+        inner.tasks[index].syscall_times[syscall_id] += 1;
+    }
+    fn set_task_info(&self, taskinfo: *mut TaskInfo) {
+        let inner = self.inner.exclusive_access();
+        let t = (get_time() - inner.tasks[inner.current_task].task_begin_time)*1000/CLOCK_FREQ;
+        // print!("{}", t);
+        unsafe {
+            *taskinfo = TaskInfo {
+                // status: inner.tasks[inner.current_task].task_status,
+                status: TaskStatus::Running,
+                syscall_times: inner.tasks[inner.current_task].syscall_times,
+                time: t,
+            };
+        }
+    }
 }
 
 /// Run the first task in task list.
@@ -341,3 +363,10 @@ pub fn exit_current_and_run_next() {
 
 // LAB1: Public functions implemented here provide interfaces.
 // You may use TASK_MANAGER member functions to handle requests.
+pub fn update_syscall_times(syscall_id: usize) {
+    TASK_MANAGER.update_syscall_times(syscall_id);
+}
+
+pub fn set_task_info(taskinfo: *mut TaskInfo) {
+    TASK_MANAGER.set_task_info(taskinfo);
+}
